@@ -21,8 +21,8 @@
 #endif
 
 
-template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>,
-    typename s_lock_t = std::unique_lock<mutex_t >>
+template <typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>,
+    typename s_lock_t = std::unique_lock<mutex_t > >
     // std::shared_lock<std::shared_timed_mutex>, when mutex_t = std::shared_timed_mutex
 class safe_ptr {
 protected:
