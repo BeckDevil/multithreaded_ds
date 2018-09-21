@@ -2,7 +2,6 @@
 #ifndef MULTITHREADED_CONTAINER_H
 #define MULTITHREADED_CONTAINER_H
 
-
 #include <iostream>
 #include <string>
 #include <vector>
@@ -27,6 +26,275 @@
 
 namespace sf
 {
+	// ----------------------- Class safe_ptr ----------------------------------//
+	template< typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t> >
+	class safe_ptr
+	{
+	protected:
+		const std::shared_ptr<T> ptr;
+		std::shared_ptr<mutex_t> mtx_ptr;
+	
+		template< typename req_lock >
+		class auto_lock_t
+		{
+			T* const ptr;
+			req_lock lock;
+		public:
+			auto_lock_t(auto_lock_t&& o) : ptr(std::move(o.ptr)), lock(std::move(o.lock)){}
+			auto_lock_t(T* const _ptr, mutex_t& _mtx): ptr(_ptr), lock(_mtx){}
+			T* operator -> (){ return ptr; }
+			const T* operator -> () const { return ptr; }
+		};
+	
+		template< typename req_lock >
+		class auto_lock_obj_t 
+		{
+			T* const ptr;
+			req_lock lock;
+		public:
+			auto_lock_obj_t(auto_lock_obj_t&& o) : ptr(std::move(o.ptr)), lock(std::move(o.lock)) {}
+			auto_lock_obj_t(T* const _ptr, mutex_t& _mtx): ptr(_ptr), lock(_mtx) {}
+			template< typename arg_t >
+			auto operator[](arg_t arg) -> decltype((*ptr)[arg]){ return (*ptr)[arg]; }
+		};
+	
+		struct no_lock_t{
+			no_lock_t(no_lock_t &&){} 
+			template <typename sometype> no_lock_t(sometype&){}
+		};
+	
+		using auto_nolock_t = auto_lock_obj_t<no_lock_t>;
+		T* get_obj_ptr() const{return ptr.get();}
+		mutex_t* get_mtx_ptr() const {return mtx_ptr.get();}
+	
+		template< typename... Args> void lock_shared() const {mtx_ptr->lock_shared(); }
+		template< typename... Args> void unlock_shared() const {mtx_ptr->unlock_shared(); }
+		void lock() { mtx_ptr->lock(); }
+		void unlock() { mtx_ptr->unlock(); }
+		friend struct link_safe_ptrs;
+		template< typename, typename, typename, typename> friend class safe_obj;
+		template< typename some_type> friend struct xlocked_safe_ptr;
+		template< typename some_type> friend struct slocked_safe_ptr;
+		template< typename, typename, size_t, size_t> friend class lock_timed_transaction;
+	
+		template< typename mutex_type > friend class std::lock_guard;
+	#ifdef SHARED_MTX
+		template< typename mutex_type > friend class std::shared_mutex;
+	#endif
+	
+	public:
+		template< typename... Args >
+		safe_ptr(Args... args) : ptr(std::make_shared< T >(args...)), mtx_ptr(std::make_shared<mutex_t>()) {}
+	
+	//	T* operator -> () { return ptr.get(); }
+	//	T& operator * () { return *ptr.get(); }
+	//	const T* operator -> () const { return ptr.get(); }
+	//	const T& operator * () const { return *ptr.get(); }
+	
+		auto_lock_t<x_lock_t> operator -> () {return auto_lock_t< x_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+		auto_lock_obj_t<x_lock_t> operator * () {return auto_lock_obj_t< x_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+	
+		const auto_lock_t<s_lock_t> operator -> () const { return auto_lock_t< s_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+		const auto_lock_obj_t<s_lock_t> operator * () const { return auto_lock_obj_t< s_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+	
+		typedef mutex_t mtx_t;
+		typedef T obj_t;
+		typedef x_lock_t xlock_t;
+		typedef s_lock_t slock_t;
+	};
+	
+	template<typename T> using default_safe_ptr = safe_ptr<T, std::recursive_mutex, std::unique_lock<std::recursive_mutex>, std::unique_lock<std::recursive_mutex> >;
+	#ifdef SHARED_MTX
+	template<typename T> using shared_mutex_safe_ptr = safe_ptr<T, std::shared_timed_mutex, std::unique_lock<std::shared_timed_mutex>, std::shared_lock<std::shared_timed_mutex> >;
+	#endif
+
+	// ------------------------ Class safe_obj ------------------------------------//
+
+	template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock< mutex_t > >
+	class safe_obj
+	{
+	protected:
+		T obj;
+		mutable mutex_t mtx;
+
+		T* get_obj_ptr() const{return const_cast<T*> (&obj);}
+		mutex_t* get_mtx_ptr() const {return &mtx;}
+
+		template <typename req_lock> using auto_lock_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::template auto_lock_t<req_lock>;
+		template <typename req_lock> using auto_lock_obj_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::template auto_lock_obj_t<req_lock>;
+		using auto_nolock_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::auto_nolock_t;
+		template< typename some_type> friend struct xlocked_safe_ptr;
+		template< typename some_type> friend struct slocked_safe_ptr;
+	
+	public:
+		template< typename... Args >
+		safe_obj(Args... args) : obj(args...) {}
+		safe_obj(safe_obj const& safe_obj) {
+			std::lock_guard<mutex_t> lock(safe_obj.mtx);
+			obj = safe_obj.obj;
+		}
+		explicit operator T() const{
+			s_lock_t lock(mtx);
+			T obj_tmp = obj;
+			return obj_tmp;
+		};
+
+	
+		auto_lock_t<x_lock_t> operator -> () {return auto_lock_t< x_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+		auto_lock_obj_t<x_lock_t> operator * () {return auto_lock_obj_t< x_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+		const auto_lock_t<s_lock_t> operator -> () const { return auto_lock_t< s_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+		const auto_lock_obj_t<s_lock_t> operator * () const { return auto_lock_obj_t< s_lock_t >(get_obj_ptr(), *get_mtx_ptr()); }
+	
+		typedef mutex_t mtx_t;
+		typedef T obj_t;
+		typedef x_lock_t xlock_t;
+		typedef s_lock_t slock_t;
+	};
+
+	// -------------------------- class hide_ptr ---------------------//
+	template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t >>
+	class safe_hide_ptr : protected safe_ptr<T, mutex_t, x_lock_t, s_lock_t> {
+	public:
+		template<typename... Args> safe_hide_ptr(Args... args) : safe_ptr<T, mutex_t, x_lock_t, s_lock_t>(args...) {}
+
+		friend struct link_safe_ptrs;
+		template<typename, typename, size_t, size_t> friend class lock_timed_transaction;
+		template<typename some_type> friend struct xlocked_safe_ptr;
+		template<typename some_type> friend struct slocked_safe_ptr;
+
+		template<typename req_lock> using auto_lock_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::template auto_lock_t<req_lock>;
+		template<typename req_lock> using auto_lock_obj_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::template auto_lock_obj_t<req_lock>;
+		using auto_nolock_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::auto_nolock_t;
+
+		typedef mutex_t mtx_t;
+		typedef T obj_t;
+		typedef x_lock_t xlock_t;
+		typedef s_lock_t slock_t;
+	};
+
+
+	// -------------------------- class hide_obj ---------------------//
+	template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t >>
+	class safe_hide_iobj : protected safe_obj<T, mutex_t, x_lock_t, s_lock_t> {
+	public:
+		template<typename... Args> safe_hide_obj(Args... args) : safe_obj<T, mutex_t, x_lock_t, s_lock_t>(args...) {}
+		explicit operator T() const{ return static_cast <safe_obj<T, mutex_t, x_lock_t, s_lock_t> >(*this); };
+
+		friend struct link_safe_ptrs;
+		template<typename, typename, size_t, size_t> friend class lock_timed_transaction;
+		template<typename some_type> friend struct xlocked_safe_ptr;
+		template<typename some_type> friend struct slocked_safe_ptr;
+
+		template<typename req_lock> using auto_lock_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::template auto_lock_t<req_lock>;
+		template<typename req_lock> using auto_lock_obj_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::template auto_lock_obj_t<req_lock>;
+		using auto_nolock_t = typename safe_ptr<T, mutex_t, x_lock_t, s_lock_t>::auto_nolock_t;
+
+		typedef mutex_t mtx_t;
+		typedef T obj_t;
+		typedef x_lock_t xlock_t;
+		typedef s_lock_t slock_t;
+	};
+
+	// ----------------------- link_safe_ptrs ------------------------------//
+	struct link_safe_ptrs 
+	{
+		template<typename T1, typename... Args>
+		link_safe_ptrs(T1 &first_ptr, Args&... args) {
+			std::lock_guard<T1> lock(first_ptr);
+			typedef typename T1::mtx_t mutex_t;
+			std::shared_ptr<mutex_t> old_mtxs[] = { args.mtx_ptr ... }; // to unlock before mutexes will be destroyed
+			std::shared_ptr<std::lock_guard<mutex_t>> locks[] = { std::make_shared<std::lock_guard<mutex_t>>(*args.mtx_ptr) ... };
+			std::shared_ptr<mutex_t> mtxs[] = { (args.mtx_ptr = first_ptr.mtx_ptr) ... };
+		}
+	};
+
+	// ----------------------- xlocked_safe_ptr ------------------------------//
+	template <typename T>
+	struct xlocked_safe_ptr
+	{
+		T &ref_safe;
+		typename T::xlock_t xlock;
+		xlocked_safe_ptr(T const& p): ref_safe(*const_cast<T*>(&p)), xlock(*(ref_safe.get_mtx_ptr())) {}
+		typename T::obj_t* operator -> (){ return ref_safe.get_obj_ptr(); }
+		typename T::auto_nolock_t operator *(){return typename T::auto_nolock_t(ref_safe.get_obj_ptr(), *ref_safe.get_mtx_ptr()); }
+		operator typename T::obj_t() { return ref_safe.obj; }
+	};
+
+	template<typename T>
+	xlocked_safe_ptr<T> xlock_safe_ptr(T const& arg) { return xlocked_safe_ptr<T>(arg); }
+
+	// ----------------------- slocked_safe_ptr ------------------------------//
+	template <typename T>
+	struct slocked_safe_ptr
+	{
+		T &ref_safe;
+		typename T::slock_t slock;
+		slocked_safe_ptr(T const& p): ref_safe(*const_cast<T*>(&p)), slock(*(ref_safe.get_mtx_ptr())) {}
+		typename T::obj_t const* operator -> (){ return ref_safe.get_obj_ptr(); }
+		const typename T::auto_nolock_t operator *(){return typename T::auto_nolock_t(ref_safe.get_obj_ptr(), *ref_safe.get_mtx_ptr()); }
+		operator typename T::obj_t() { return ref_safe.obj; }
+	};
+
+	// -------------------------------Implementation of spinlock ----------------//
+	class spinlock_t{
+		std::atomic_flag lock_flag;
+	
+	public:
+		spinlock_t(){ lock_flag.clear(); }
+		bool try_lock() { return !lock_flag.test_and_set(std::memory_order_acquire); }
+		void lock() { 
+			for(volatile size_t i = 0; !try_lock(); ++i){
+				if (i%100000 == 0){ std::this_thread::yield();}
+			}
+		}
+		void unlock(){lock_flag.clear(std::memory_order_release);}
+	};
+
+	// --------------------------------- Recursive spinlock -----------------------//
+	class recursive_spinlock_t
+	{
+		std::atomic_flag lock_flag;
+		int64_t recursive_counter;
+
+		typedef std::thread::id thread_id_t;
+		std::atomic<std::thread::id> owner_thread_id;
+		std::thread::id get_fast_this_thread_id(){ return std::this_thread::get_id(); }
+
+	public:
+		recursive_spinlock_t(): recursive_counter(0), owner_thread_id(thread_id_t()){lock_flag.clear();}
+		bool try_lock(){
+			if(!lock_flag.test_and_set(std::memory_order_acquire)){
+				owner_thread_id.store(get_fast_this_thread_id(), std::memory_order_release);
+			}
+			else{
+				if (owner_thread_id.load(std::memory_order_acquire) != get_fast_this_thread_id()) return false;
+			}
+			++recursive_counter;
+			return true;
+		}
+
+		void lock(){
+			for(volatile size_t i = 0; !try_lock(); ++i)
+				if(i%100000 == 0) std::this_thread::yield();
+		}
+
+		void unlock(){
+			assert(owner_thread_id.load(std::memory_order_acquire) == get_fast_this_thread_id());
+			assert(recursive_counter > 0);
+
+			if(--recursive_counter == 0){
+				owner_thread_id.store(thread_id_t(), std::memory_order_release);
+				lock_flag.clear(std::memory_order_release);
+			}
+		}
+	};
+
+	// ------------------------------ class contention free shared mutex ----------------------//
+	
+
+	template<typename T>
+	slocked_safe_ptr<T> slock_safe_ptr(T const& arg) { return slocked_safe_ptr<T>(arg); }
+		
 	// contention free shared mutex (same-lock-type is recursive for X->X, X->S or S->S locks), but (S->X - is UB)
 	template<unsigned contention_free_count = 36, bool shared_flag = false>
 	class contention_free_shared_mutex {
@@ -206,69 +474,91 @@ namespace sf
 	    ~shared_lock_guard() { ref_mtx.unlock_shared(); }
 	};
 	using default_contention_free_shared_mutex = contention_free_shared_mutex<>;
+	template<typename T> using contfree_safe_ptr = safe_ptr<T, contention_free_shared_mutex<>, std::unique_lock<contention_free_shared_mutex<>>, shared_lock_guard<contention_free_shared_mutex<>> >;
+
+	// ----------------------------- Class safe_partitioned map ------------------------------//
+	template<typename key_t, typename val_t, template<class> class safe_ptr_t = default_safe_ptr, typename container_t = std::map<key_t, val_t>, typename part_t = std::map<key_t, safe_ptr_t< container_t > > >
+	class safe_map_partitioned_t
+	{
+		using safe_container_t = safe_ptr_t<container_t>;
+		typedef typename part_t::iterator part_iterator;
+		typedef typename part_t::const_iterator const_part_iterator;
+		std::shared_ptr <part_t> partition;
+	public:
+		typedef std::vector<std::pair<key_t, val_t> > result_vector_t;
+		safe_map_partitioned_t() : partition(std::make_shared<part_t>()){
+			partition->emplace(key_t(), container_t());
+		}
+	
+		safe_map_partitioned_t(const key_t start, const key_t end, const key_t step) : partition(std::make_shared<part_t>()){
+			for(key_t i = start; i < end; i += step){
+				partition->emplace(i, container_t());
+			}
+		}
+	
+		safe_map_partitioned_t(std::initializer_list<key_t> const& il): partition(std::make_shared<part_t>()){
+			for(auto &i: il){
+				partition->emplace(i, container_t());
+			}
+		}
+		part_iterator part_it(key_t const& k) { 
+			auto it = partition->lower_bound(k);
+			if (it == partition->cend()) --it;
+			return it; 
+		}
+	
+		const_part_iterator part_it(key_t const& k) const {
+			auto it = partition->lower_bound(k);
+			if (it == partition->cend()) --it;
+			return it;
+		}
+	
+		safe_container_t& part(key_t const& k) {
+			return part_it(k)->second;
+		}
+	
+		const safe_container_t& part(key_t const& k) const { 
+			return part_it(k)->second;
+		}
+	
+		void get_range_equal(const key_t& key, result_vector_t &result_vec) const {
+			result_vec.clear();
+			auto slock_container = slock_safe_ptr(part(key));
+			for (auto it = slock_container->lower_bound(key); it != slock_container->upper_bound(key); ++it)
+				result_vec.emplace_back(*it);
+		}
+	
+		void get_range_lower_upper(const key_t& low, const key_t& up, result_vector_t &result_vec) const {
+			result_vec.clear();
+			auto const& const_part = *partition;
+			auto end_it = (const_part.upper_bound(up) == const_part.cend()) ? const_part.cend() : std::next(const_part.upper_bound(up), 1);
+			auto it = const_part.lower_bound(low);
+			if (it == const_part.cend()) --it;
+			for (; it != end_it; ++it)
+				result_vec.insert(result_vec.end(), it->second->lower_bound(low), it->second->upper_bound(up));
+		}
+	
+		void erase_lower_upper(const key_t& low, const key_t& up) {
+			auto end_it = (partition->upper_bound(up) == partition->end()) ? partition->end() : std::next(partition->upper_bound(up), 1);
+			for (auto it = part_it(low); it != end_it; ++it)
+				it->second->erase(it->second->lower_bound(low), it->second->upper_bound(up));
+		}
+	
+		template<typename T, typename... Args> void emplace(T const& key, Args const&&...args) {
+			part(key)->emplace(key, args...);
+		}
+	
+		size_t size() const {
+			size_t size = 0;
+			for (auto it = partition->begin(); it != partition->end(); ++it) size += it->second->size();
+			return size;
+		}
+	
+		size_t erase(key_t const& key) throw() { return part(key)->erase(key); }
+		void clear() { for (auto it = partition->begin(); it != partition->end(); ++it) it->second->clear(); }
+	};
+	// end of classes 
+	
 } // namespace sf
-
-
-template< typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t> >
-class safe_ptr
-{
-protected:
-	const std::shared_ptr<T> ptr;
-	std::shared_ptr<mutex_t> mtx_ptr;
-
-	template< typename req_lock >
-	class auto_lock_t
-	{
-		T* const ptr;
-		req_lock lock;
-	public:
-		auto_lock_t(auto_lock_t&& o) : ptr(std::move(o.ptr)), lock(std::move(o.lock)){}
-		auto_lock_t(T* const _ptr, mutex_t& _mtx): ptr(_ptr), lock(_mtx){}
-		T* operator -> (){ return ptr; }
-		const T* operator -> () const { return ptr; }
-	};
-
-	template< typename req_lock >
-	class auto_lock_obj_t 
-	{
-		T* const ptr;
-		req_lock lock;
-	public:
-		auto_lock_obj_t(auto_lock_obj_t&& o) : ptr(std::move(o.ptr)), lock(std::move(o.lock)) {}
-		auto_lock_obj_t(T* const _ptr, mutex_t& _mtx): ptr(_ptr), lock(_mtx) {}
-		template< typename arg_t >
-		auto operator[](arg_t arg) -> decltype((*ptr)[arg]){ return (*ptr)[arg]; }
-	};
-
-	template< typename... Args> void lock_shared() const {mtx_ptr->lock_shared(); }
-	template< typename... Args> void unlock_shared() const {mtx_ptr->unlock_shared(); }
-	void lock() { mtx_ptr->lock(); }
-	void unlock() { mtx_ptr->unlock(); }
-	friend struct link_safe_ptrs;
-	template< typename, typename, size_t, size_t> friend class lock_timed_transaction;
-	template< typename mutex_type > friend class std::lock_guard;
-
-public:
-	template< typename... Args >
-	safe_ptr(Args... args) : ptr(std::make_shared< T >(args...)), mtx_ptr(std::make_shared<mutex_t>()) {}
-
-//	T* operator -> () { return ptr.get(); }
-//	T& operator * () { return *ptr.get(); }
-//	const T* operator -> () const { return ptr.get(); }
-//	const T& operator * () const { return *ptr.get(); }
-
-	auto_lock_t<x_lock_t> operator -> () {return auto_lock_t< x_lock_t >(ptr.get(), *mtx_ptr); }
-	auto_lock_obj_t<x_lock_t> operator * () {return auto_lock_obj_t< x_lock_t >(ptr.get(), *mtx_ptr); }
-
-	const auto_lock_t<s_lock_t> operator -> () const { return auto_lock_t< s_lock_t >(ptr.get(), *mtx_ptr); }
-	const auto_lock_obj_t<s_lock_t> operator * () const { return auto_lock_obj_t< s_lock_t >(ptr.get(), *mtx_ptr); }
-
-	typedef mutex_t mtx_t;
-	typedef T obj_t;
-	typedef x_lock_t xlock_t;
-	typedef s_lock_t slock_t;
-};
-template<typename T> using default_safe_ptr = safe_ptr<T, std::recursive_mutex, std::unique_lock<std::recursive_mutex>, std::unique_lock<std::recursive_mutex> >;
-
-
 #endif
+
