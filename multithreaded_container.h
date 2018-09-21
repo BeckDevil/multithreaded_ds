@@ -20,6 +20,8 @@
 #include <iomanip>
 #include <algorithm>
 
+#define SHARED_MTX
+
 #ifdef SHARED_MTX
 #include <shared_mutex>
 #endif
@@ -79,7 +81,7 @@ namespace sf
 	
 		template< typename mutex_type > friend class std::lock_guard;
 	#ifdef SHARED_MTX
-		template< typename mutex_type > friend class std::shared_mutex;
+		template< typename mutex_type > friend class std::shared_lock;
 	#endif
 	
 	public:
@@ -175,7 +177,7 @@ namespace sf
 
 	// -------------------------- class hide_obj ---------------------//
 	template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t >>
-	class safe_hide_iobj : protected safe_obj<T, mutex_t, x_lock_t, s_lock_t> {
+	class safe_hide_obj : protected safe_obj<T, mutex_t, x_lock_t, s_lock_t> {
 	public:
 		template<typename... Args> safe_hide_obj(Args... args) : safe_obj<T, mutex_t, x_lock_t, s_lock_t>(args...) {}
 		explicit operator T() const{ return static_cast <safe_obj<T, mutex_t, x_lock_t, s_lock_t> >(*this); };
@@ -520,6 +522,8 @@ namespace sf
 		const safe_container_t& part(key_t const& k) const { 
 			return part_it(k)->second;
 		}
+
+		slocked_safe_ptr<safe_container_t> read_only_part(key_t const& k) const {return slock_safe_ptr(part(k)); }
 	
 		void get_range_equal(const key_t& key, result_vector_t &result_vec) const {
 			result_vec.clear();
