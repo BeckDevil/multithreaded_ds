@@ -21,8 +21,7 @@
 #endif
 
 
-template <typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>,
-    typename s_lock_t = std::unique_lock<mutex_t > >
+template <typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t > >
     // std::shared_lock<std::shared_timed_mutex>, when mutex_t = std::shared_timed_mutex
 class safe_ptr {
 protected:
@@ -90,7 +89,7 @@ public:
     typedef s_lock_t slock_t;
 };
 
-template<typename T> using default_safe_ptr = safe_ptr<T, std::recursive_mutex, std::unique_lock<std::recursive_mutex>, std::unique_lock<std::recursive_mutex>>;
+template<typename T> using default_safe_ptr = safe_ptr<T, std::recursive_mutex, std::unique_lock<std::recursive_mutex>, std::unique_lock<std::recursive_mutex> >;
 
 #ifdef SHARED_MTX // C++14
 template<typename T> using shared_mutex_safe_ptr = 
@@ -100,8 +99,7 @@ safe_ptr< T, std::shared_timed_mutex, std::unique_lock<std::shared_timed_mutex>,
 
 
 // hide ptr
-template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>,
-    typename s_lock_t = std::unique_lock<mutex_t >>
+template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t > >
 class safe_hide_ptr : protected safe_ptr<T, mutex_t, x_lock_t, s_lock_t> {
 public:
     template<typename... Args> safe_hide_ptr(Args... args) : safe_ptr<T, mutex_t, x_lock_t, s_lock_t>(args...) {}
@@ -120,10 +118,10 @@ public:
     typedef s_lock_t slock_t;
 };
 
+
 // hide obj
-template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>,
-    typename s_lock_t = std::unique_lock<mutex_t >>
-class safe_hide_obj : protected safe_obj<T, mutex_t, x_lock_t, s_lock_t> {
+template<typename T, typename mutex_t = std::recursive_mutex, typename x_lock_t = std::unique_lock<mutex_t>, typename s_lock_t = std::unique_lock<mutex_t > >
+class safe_hide_obj : protected safe_obj <T, mutex_t, x_lock_t, s_lock_t> {
 public:
     template<typename... Args> safe_hide_obj(Args... args) : safe_obj<T, mutex_t, x_lock_t, s_lock_t>(args...) {}
     explicit operator T() const { return static_cast< safe_obj<T, mutex_t, x_lock_t, s_lock_t> >(*this); };
@@ -538,7 +536,7 @@ void benchmark_safe_ptr(T safe_map, size_t const iterations_count,
     safe_vec_max_latency->push_back(max_time);
     safe_vec_median_latency->insert(safe_vec_median_latency->end(), median_arr.begin(), median_arr.end());
 }
-
+*/
 
 
 int main(int argc, char** argv) {
@@ -575,7 +573,7 @@ int main(int argc, char** argv) {
         std::chrono::duration<double>(steady_end - steady_start).count()*1000 << " nano-sec \n";
     std::cout << std::endl;
 
-
+/*
     std::cout << "Filling of containers... ";
     try {
         for (size_t i = 0; i < container_size; ++i)
@@ -691,6 +689,6 @@ int main(int argc, char** argv) {
 	    
     std::cout << "end"; 
     int b; std::cin >> b;
-
+*/
     return 0;
 }

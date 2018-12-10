@@ -72,7 +72,7 @@ void benchmark_std_map(T &test_map,
 		}
 		// initialize the lock for mutex
 		std::lock_guard<std::mutex> lock(mtx_map);
-
+	//	printf("Iteration %d on Thread %d, Operation : %d\n ", i, std::this_thread::get_id(), num_op);
 		switch(num_op){
 			case insert_op:{
 				burn_cpu();
@@ -330,7 +330,7 @@ int main(int argc, char** argv)
 	const size_t iterations_count = 2000000;
 	const size_t container_size = 100000;
 	std::vector<std::thread> vec_thread(std::thread::hardware_concurrency());
-	const bool measure_latency = false;
+	const bool measure_latency = true;
 	std::function<void(void)> burn_cpu = []() {};
 
 	// specify max threads from command line
@@ -563,7 +563,7 @@ int main(int argc, char** argv)
 		std::cout << std::endl;
 		safe_vec_max_latency->clear();
 		safe_vec_median_latency->clear();
-		
+	
 	}
 
 
